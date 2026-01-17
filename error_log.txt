@@ -1,0 +1,20 @@
+DEBUG: CWD: C:\Users\Speed\iaruviaro
+DEBUG: Sys Path: ['C:\\Users\\Speed\\iaruviaro', 'C:\\Python314\\python314.zip', 'C:\\Python314\\DLLs', 'C:\\Python314\\Lib', 'C:\\Python314', 'C:\\Users\\Speed\\iaruviaro\\.venv', 'C:\\Users\\Speed\\iaruviaro\\.venv\\Lib\\site-packages', 'C:\\Users\\Speed\\iaruviaro\\ruviaro_agent']
+Traceback (most recent call last):
+  File "C:\Users\Speed\iaruviaro\test_sales_persona.py", line 13, in <module>
+    from src.llm_openai import GPTRuviaroBrain
+  File "C:\Users\Speed\iaruviaro\ruviaro_agent\src\llm_openai.py", line 237
+    ]
+    ^
+SyntaxError: unmatched ']'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Speed\iaruviaro\test_sales_persona.py", line 19, in <module>
+    print(f"\u274c General Error during import: {e}")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u274c' in position 0: character maps to <undefined>

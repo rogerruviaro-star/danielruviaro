@@ -1,0 +1,22 @@
+version: "3"
+services:
+  daniel_agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: daniel_agent
+    restart: always
+    env_file: .env
+    volumes:
+      - ./ruviaro_agent/src:/app/ruviaro_agent/src
+      - ./ruviaro_agent/database:/app/ruviaro_agent/database
+    ports:
+      - "5000:5000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - evolution_evolution-net
+
+networks:
+  evolution_evolution-net:
+    external: true
