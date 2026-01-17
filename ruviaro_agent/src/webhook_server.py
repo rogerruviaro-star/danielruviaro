@@ -5,14 +5,21 @@ import sys
 import json
 import logging
 import time
+import datetime
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
 # Carrega variáveis do arquivo .env
 load_dotenv()
 
+# Configuração da API
+API_PROVIDER = os.getenv("API_PROVIDER", "EVOLUTION").upper()
+EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
+EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "")
+INSTANCE_NAME = os.getenv("INSTANCE_NAME", "daniel")
+
 # Logger
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Path do projeto
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -28,159 +35,74 @@ except ImportError as e:
 
 app = Flask(__name__)
 
-# Configurações
-# Evolution API Configuration
-EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "http://localhost:8080")
-EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "DANIEL_RUVIARO_2024_KEY")
-INSTANCE_NAME = os.getenv("INSTANCE_NAME", "daniel")
+# Configurações Z-API
+ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
+ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
 
-# URL base para envio (ajuste conforme seu IP real se rodar fora do docker, ou nome do container internamente)
-# Se o agente rodar no mesmo docker compose, pode usar http://evolution_api:8080
-# Se rodar fora, usar URL externa.
-BASE_URL = f"{EVOLUTION_API_URL}/message"
-
+# URL base para envio (Z-API)
+BASE_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}"
 
 sessions = {}
 
 def get_brain(sender_id):
     """Recupera ou cria uma sessão cerebral para o usuário."""
     if sender_id not in sessions:
-        # Aqui poderíamos carregar o histórico do banco de dados (SQLite)
-        # Por enquanto, inicia uma nova sessão GPT
-        sessions[sender_id] = GPTRuviaroBrain(sender_id=sender_id) # Passa ID para o Brain carregar memória
+        sessions[sender_id] = GPTRuviaroBrain(sender_id=sender_id) 
     return sessions[sender_id]
 
-def send_message(recipient, text=None, audio_path=None):
-    """Envia mensagem (Texto ou Áudio) para o WhatsApp."""
-    
-    clean_phone = recipient.replace("@s.whatsapp.net", "")
-    
-    headers = {
-        "Content-Type": "application/json",
-        "apikey": EVOLUTION_API_KEY
-    }
-
+def send_message_zapi(phone, text):
+    """Envia mensagem de TEXTO via Z-API."""
     try:
-        # 1. Envio de Áudio
-        if audio_path:
-            import base64
-            with open(audio_path, 'rb') as f:
-                encoded_string = base64.b64encode(f.read()).decode('utf-8')
-            
-            payload = {
-                "number": clean_phone,
-                "audio": encoded_string,
-                "mediatype": "audio", # Opcional dependendo da versão
-            }
-            # Endpoint Evolution: /message/sendWhatsAppAudio ou /message/sendAudio
-            url = f"{BASE_URL}/sendWhatsAppAudio/{INSTANCE_NAME}"
-
-            logging.info(f"📤 Enviando Áudio para {clean_phone} via Evolution...")
-            response = requests.post(url, json=payload, headers=headers)
-            logging.info(f"Status envio áudio: {response.status_code} - {response.text}")
-            return
-
-        # 2. Envio de Texto
-        if text:
-            import random
-            time.sleep(random.uniform(2, 4)) # Delay mais curto
-            
-            payload = {
-                "number": clean_phone,
-                "text": text
-            }
-            # Endpoint Evolution: /message/sendText
-            url = f"{BASE_URL}/sendText/{INSTANCE_NAME}"
-            
-            logging.info(f"📤 Enviando Texto para {clean_phone}: {text[:50]}...")
-            response = requests.post(url, json=payload, headers=headers)
-            logging.info(f"Status envio texto: {response.status_code} - {response.text}")
-
+        url = f"{BASE_URL}/send-text"
+        payload = {
+            "phone": phone,
+            "message": text
+        }
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(url, json=payload, headers=headers)
+        logging.info(f"📤 [Z-API] Enviado para {phone}: {response.status_code}")
     except Exception as e:
-        logging.error(f"❌ Erro no envio: {e}")
+        logging.error(f"❌ Erro ao enviar Z-API: {e}")
 
 @app.route('/webhook', methods=['POST'])
-def whatsapp_webhook():
-    data = request.json
-    sender = None
-    message_content = None
-    is_audio = False
-    audio_url = None
+def zapi_webhook_handler():
+    try:
+        data = request.json
+        # Log em arquivo para garantir (com encoding utf-8)
+        with open("debug_log.txt", "a", encoding="utf-8") as f:
+            f.write(f"\n[{datetime.datetime.now()}] RECEBIDO: {json.dumps(data)}\n")
+        
+        print(f"\n\n[DEBUG] DADOS CHEGARAM! Ver debug_log.txt\n\n", flush=True)
+        
+        # Verifica se é mensagem de Text
+        # Z-API estrutura: { "phone": "55...", "text": { "message": "ola" }, ... }
+        
+        if 'text' in data and 'message' in data['text']:
+            phone = data.get('phone')
+            message_text = data['text']['message']
+            from_me = data.get('fromMe', False)
 
-    # --- Detector Evolution API ---
-    # Estrutura típica: data.type = "messages.upsert" e o conteúdo dentro de data.data
-    
-    # Verifica eventos
-    event_type = data.get('type')
-    
-    if event_type == "messages.upsert":
-        msg_data = data.get('data', {})
-        key = msg_data.get('key', {})
-        from_me = key.get('fromMe', False)
-        
-        # Ignora mensagens enviadas por mim mesmo
-        if from_me:
-             return jsonify({"status": "ignored_self"}), 200
+            # Ignora minhas próprias mensagens
+            if from_me:
+                return jsonify({"status": "ignored_me"}), 200
 
-        sender = key.get('remoteJid') # ex: 55559999@s.whatsapp.net
-        message = msg_data.get('message', {})
-        
-        # 1. Texto Simples
-        if 'conversation' in message:
-            message_content = message['conversation']
-        
-        # 2. Texto Estendido (Android/iOS)
-        elif 'extendedTextMessage' in message:
-            message_content = message['extendedTextMessage'].get('text')
+            logging.info(f"📩 [Z-API] De {phone}: {message_text}")
+
+            # Cérebro
+            agent = get_brain(phone)
+            response_text = agent.process_message(message_text)
+
+            # Resposta
+            send_message_zapi(phone, response_text)
             
-        # 3. Áudio
-        elif 'audioMessage' in message:
-            is_audio = True
-            # Evolution geralmente não manda URL pública direto se for base64 habilitado no webhook
-            # Mas vamos verificar como pegar. Se 'saveMedia' estiver on no evolution, vem path.
-            # Se vier base64, vem em message.audioMessage.url ou mediaKey?
-            # Na v2, geralmente precisamos baixar ou vem em base64 se configurado.
-            # Para simplificar, vamos avisar que recebeu áudio mas precisamos configurar a conversão.
-            pass
-            
-            # TODO: Implementar download de mídia da Evolution
-            # Por enquanto, tratar como não suportado ou tentar extrair texto se possível (transcrição do whatsapp?)
-            # Vamos logar e tentar seguir.
-    
-    # Ignora se não achou remetente ou conteúdo
-    if not sender or (not message_content and not is_audio):
-        return jsonify({"status": "ignored_no_content"}), 200
+            return jsonify({"status": "success"}), 200
 
-    logging.info(f"\n📩 Mensagem de {sender} [Audio={is_audio}]")
+        return jsonify({"status": "ignored_type"}), 200
 
-    # Transcrição (Whisper) - Ajuste necessário para Evolution (download de media)
-    if is_audio:
-        # Temporário: Avisar que áudio está desativado na migração
-        # message_content = transcribe_audio(...) 
-        logging.info("👂 Recebido áudio (AINDA NÃO INTEGRADO COM EVOLUTION DOWNLOAD)")
-        # message_content = "[ÁUDIO RECEBIDO - Transcrição pendente de config]"
-        return jsonify({"status": "audio_pending_config"}), 200
-
-    # Processamento Cerebral
-    agent = get_brain(sender)
-    response_text = agent.process_message(message_content)
-    
-    logging.info(f"🤖 Resposta do Brain: {response_text}")
-
-    # Decisão de Resposta (Texto ou Áudio?)
-    # Se entrada foi áudio, resposta é áudio.
-    if is_audio:
-        audio_file = generate_audio(response_text)
-        if audio_file:
-            send_message(sender, audio_path=audio_file)
-        else:
-            # Fallback se falhar geração
-            send_message(sender, text=response_text)
-    else:
-        send_message(sender, text=response_text)
-    
-    return jsonify({"status": "processed"}), 200
+    except Exception as e:
+        logging.error(f"Erro webhook: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    print("🚀 Servidor Webhook Ruviaro (Z-API + Audio) Rodando...")
-    app.run(port=5000)
+    print(">> Servidor Ruviaro (Z-API Mode) Rodando na porta 5000...")
+    app.run(host='0.0.0.0', port=5000)
