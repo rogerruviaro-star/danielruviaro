@@ -2,15 +2,15 @@ import os
 import json
 import sqlite3
 import datetime
-from openai import OpenAI
+import google.generativeai as genai
 
-# Tente pegar a chave do ambiente
-API_KEY = os.getenv("OPENAI_API_KEY")
+# Configurar Gemini API
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
 
 class GPTRuviaroBrain:
-    def __init__(self, model="gpt-4o", sender_id=None):
-        self.client = OpenAI(api_key=API_KEY)
-        self.model = model
+    def __init__(self, model="gemini-1.5-flash", sender_id=None):
+        self.model = genai.GenerativeModel(model)
         self.sender_id = sender_id
         self.history = []
         
@@ -33,7 +33,8 @@ class GPTRuviaroBrain:
         sales_injection = "\n\n### INSTRUÇÃO DE VENDA CRÍTICA\nSe o cliente pedir uma marca específica (ex: TRW) e o estoque tiver outra (ex: Viemar), você DEVE argumentar que a nossa marca é melhor (mais reforçada, melhor garantia, feita pro Brasil). Nunca perca a venda por marca."
         self.system_prompt = base_prompt + sales_injection + memory_injection
         
-        self.history.append({"role": "system", "content": self.system_prompt})
+        # Inicializa chat do Gemini
+        self.chat = self.model.start_chat(history=[])
 
     def _get_db(self):
         return sqlite3.connect(self.db_path)
@@ -84,200 +85,109 @@ class GPTRuviaroBrain:
         except:
             pass
 
-    def process_message(self, user_message):
-        # Detecta se é multimídia (imagem) ou texto puro
-        if isinstance(user_message, dict) and user_message.get('type') == 'image':
-            # Entrada Visual
-            content_payload = [
-                {"type": "text", "text": user_message.get('text', "Analise esta imagem.")},
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": user_message['image_url']
-                    }
-                }
-            ]
-            self.history.append({"role": "user", "content": content_payload})
-            self._save_interaction(f"[IMAGEM] {user_message['text']}", 'user')
-        else:
-            # Entrada Texto Puro
-            self.history.append({"role": "user", "content": user_message})
-            self._save_interaction(user_message, 'user')
+    def _execute_tool(self, fname, args):
+        """Executa as ferramentas/funções internas."""
+        tool_output = ""
+        
+        if fname == "registrar_veiculo":
+            try:
+                conn = self._get_db()
+                cursor = conn.cursor()
+                if args.get('name'):
+                    cursor.execute("UPDATE customers SET vehicle_info = ?, name = ? WHERE phone = ?", (args['vehicle'], args['name'], self.sender_id))
+                else:
+                    cursor.execute("UPDATE customers SET vehicle_info = ? WHERE phone = ?", (args['vehicle'], self.sender_id))
+                conn.commit()
+                conn.close()
+                tool_output = "Veículo/Nome salvo com sucesso na memória persistente."
+            except Exception as e:
+                tool_output = f"Erro ao salvar: {e}"
 
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "registrar_veiculo",
-                    "description": "Salva o carro do cliente na memória. Use quando ele confirmar o modelo.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "vehicle": {"type": "string", "description": "Ex: Gol G5 1.6 ou Honda Civic 2010"},
-                            "name": {"type": "string", "description": "Nome do cliente (se ele falou)"}
-                        },
-                        "required": ["vehicle"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "handoff_para_humano",
-                    "description": "Transfere para o atendente humano COTAR PREÇOS/ESTOQUE. O bot sai de cena.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "summary": {"type": "string", "description": "Resumo do que o cliente quer (Peça + Carro + Problema)"}
-                        },
-                        "required": ["summary"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "diagnosticar_problema",
-                    "description": "Ajuda a identificar a peça baseada no sintoma relatado. Consultar base de conhecimento interna.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "symptom": {"type": "string", "description": "Descrição do problema (ex: barulho na roda, carro falhando)"}
-                        },
-                        "required": ["symptom"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "informacoes_loja",
-                    "description": "Fornece dados operacionais (PIX, Endereço, Horário).",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "topic": {"type": "string", "enum": ["pix", "address", "hours", "warranty"]}
-                        },
-                        "required": ["topic"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "calcular_parcelamento",
-                    "description": "Calcula parcelas com juros de 1.2% a.m. Ofertar proativamente quando falar de preço.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "total_value": {"type": "number", "description": "Valor total à vista"}
-                        },
-                        "required": ["total_value"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "correcao_tecnica",
-                    "description": "Corrige gentilmente o nome da peça (Ex: cliente diz 'farol traseiro', Beto diz 'lanterna').",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "wrong_term": {"type": "string", "description": "O termo errado usado pelo cliente"},
-                            "correct_term": {"type": "string", "description": "O termo técnico correto"},
-                            "explanation": {"type": "string", "description": "Breve explicação técnica (Ex: Farol é na frente, lanterna é atrás)"}
-                        },
-                        "required": ["wrong_term", "correct_term", "explanation"]
-                    }
-                }
+        elif fname == "diagnosticar_problema":
+            tool_output = f"DIAGNOSTICO: Para o sintoma '{args.get('symptom', '')}', considere peças comuns como: Buchas, Bieletas, Amortecedores (se suspensão); Pastilhas (se freio). Pergunte se ele ouve estalos ou barulho seco."
+
+        elif fname == "calcular_parcelamento":
+            valor = float(args.get('total_value', 0))
+            tabela = "Opções de Parcelamento (Taxa 1.2% a.m.):\n"
+            for p in range(1, 11): 
+                if p == 1:
+                    tabela += f"1x R$ {valor:.2f} (Sem Juros)\n"
+                else:
+                    montante = valor * (1 + (0.012 * p))
+                    parcela = montante / p
+                    tabela += f"{p}x R$ {parcela:.2f} (Total R$ {montante:.2f})\n"
+            tool_output = tabela
+
+        elif fname == "correcao_tecnica":
+            tool_output = f"CORRECAO: O cliente disse '{args.get('wrong_term', '')}', mas o certo é '{args.get('correct_term', '')}'. Explique: {args.get('explanation', '')}."
+
+        elif fname == "informacoes_loja":
+            topics = {
+                "pix": "CNPJ: 24.775.830/0001-59 (Ruviaro Auto Peças Ltda). Banco Sicredi.",
+                "address": "Av. Gov. Walter Jobim, 585 - Patronato, Santa Maria - RS",
+                "hours": "Segunda a Sexta: 08:00–12:00, 13:30–18:00. Sábado: 08:00–12:00.",
+                "warranty": "Garantia total de balcão. Deu problema? Trocamos. Nosso pós-venda é referência."
             }
-        ]
+            tool_output = topics.get(args.get('topic', ''), "Info não disponível.")
+
+        elif fname == "handoff_para_humano":
+            tool_output = "HANDOFF_TRIGGERED. Avise o cliente que o especialista humano vai assumir para passar valores exatos."
+
+        return tool_output
+
+    def process_message(self, user_message):
+        # Salva interação do usuário
+        if isinstance(user_message, dict) and user_message.get('type') == 'image':
+            self._save_interaction(f"[IMAGEM] {user_message.get('text', '')}", 'user')
+            user_text = user_message.get('text', 'Analise esta imagem.')
+        else:
+            self._save_interaction(user_message, 'user')
+            user_text = user_message
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=self.history,
-                tools=tools,
-                tool_choice="auto"
-            )
+            # Monta prompt completo com system prompt + mensagem do usuário
+            full_prompt = f"""
+{self.system_prompt}
 
-            response_message = response.choices[0].message
-            tool_calls = response_message.tool_calls
+### FUNÇÕES DISPONÍVEIS (Use quando apropriado):
+- registrar_veiculo: Salva o carro do cliente. Use quando ele confirmar o modelo.
+- handoff_para_humano: Transfere para humano para cotação. Use quando precisar de preços.
+- diagnosticar_problema: Ajuda diagnosticar peça baseado em sintoma.
+- informacoes_loja: Fornece PIX, endereço, horário, garantia.
+- calcular_parcelamento: Calcula parcelas com juros 1.2% a.m.
+- correcao_tecnica: Corrige termo técnico gentilmente.
 
-            if tool_calls:
-                self.history.append(response_message)
+Se precisar usar uma função, responda no formato:
+[FUNCTION_CALL: nome_da_funcao] {{"parametro": "valor"}}
 
-                for tool_call in tool_calls:
-                    fname = tool_call.function.name
-                    args = json.loads(tool_call.function.arguments)
+Mensagem do cliente: {user_text}
+"""
+            
+            # Envia para o Gemini
+            response = self.chat.send_message(full_prompt)
+            reply = response.text
+            
+            # Verifica se há chamada de função na resposta
+            if "[FUNCTION_CALL:" in reply:
+                import re
+                match = re.search(r'\[FUNCTION_CALL:\s*(\w+)\]\s*(\{.*?\})', reply, re.DOTALL)
+                if match:
+                    fname = match.group(1)
+                    try:
+                        args = json.loads(match.group(2))
+                    except:
+                        args = {}
                     
-                    tool_output = ""
+                    tool_result = self._execute_tool(fname, args)
                     
-                    if fname == "registrar_veiculo":
-                        # Atualiza DB
-                        try:
-                            conn = self._get_db()
-                            cursor = conn.cursor()
-                            if args.get('name'):
-                                cursor.execute("UPDATE customers SET vehicle_info = ?, name = ? WHERE phone = ?", (args['vehicle'], args['name'], self.sender_id))
-                            else:
-                                cursor.execute("UPDATE customers SET vehicle_info = ? WHERE phone = ?", (args['vehicle'], self.sender_id))
-                            conn.commit()
-                            conn.close()
-                            tool_output = "Veículo/Nome salvo com sucesso na memória persistente."
-                        except Exception as e:
-                            tool_output = f"Erro ao salvar: {e}"
+                    # Segunda chamada com resultado da ferramenta
+                    followup = f"Resultado da função {fname}: {tool_result}\n\nAgora responda ao cliente de forma natural, sem mencionar a função."
+                    final_response = self.chat.send_message(followup)
+                    reply = final_response.text
 
-                    elif fname == "diagnosticar_problema":
-                        tool_output = f"DIAGNOSTICO: Para o sintoma '{args['symptom']}', considere peças comuns como: Buchas, Bieletas, Amortecedores (se suspensão); Pastilhas (se freio). Pergunte se ele ouve estalos ou barulho seco."
-
-                    elif fname == "calcular_parcelamento":
-                        valor = float(args['total_value'])
-                        tabela = "Opções de Parcelamento (Taxa 1.2% a.m.):\n"
-                        for p in range(1, 11): 
-                            if p == 1:
-                                tabela += f"1x R$ {valor:.2f} (Sem Juros)\n"
-                            else:
-                                montante = valor * (1 + (0.012 * p))
-                                parcela = montante / p
-                                tabela += f"{p}x R$ {parcela:.2f} (Total R$ {montante:.2f})\n"
-                        tool_output = tabela
-
-                    elif fname == "correcao_tecnica":
-                        tool_output = f"CORRECAO: O cliente disse '{args['wrong_term']}', mas o certo é '{args['correct_term']}'. Explique: {args['explanation']}."
-
-                    elif fname == "informacoes_loja":
-                        topics = {
-                            "pix": "CNPJ: 24.775.830/0001-59 (Ruviaro Auto Peças Ltda). Banco Sicredi.",
-                            "address": "Av. Gov. Walter Jobim, 585 - Patronato, Santa Maria - RS",
-                            "hours": "Segunda a Sexta: 08:00–12:00, 13:30–18:00. Sábado: 08:00–12:00.",
-                            "warranty": "Garantia total de balcão. Deu problema? Trocamos. Nosso pós-venda é referência."
-                        }
-                        tool_output = topics.get(args['topic'], "Info não disponível.")
-
-                    elif fname == "handoff_para_humano":
-                        tool_output = "HANDOFF_TRIGGERED. Avise o cliente que o especialista humano vai assumir para passar valores exatos."
-
-                    self.history.append({
-                        "tool_call_id": tool_call.id,
-                        "role": "tool",
-                        "name": fname,
-                        "content": tool_output
-                    })
-                
-                # Segunda chamada
-                second_response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=self.history
-                )
-                final_answer = second_response.choices[0].message.content
-            else:
-                final_answer = response_message.content
-
-            self.history.append({"role": "assistant", "content": final_answer})
-            self._save_interaction(final_answer, 'bot')
-            return final_answer
+            self.history.append({"role": "assistant", "content": reply})
+            self._save_interaction(reply, 'bot')
+            return reply
 
         except Exception as e:
             return f"Opa, falhou aqui meu sistema: {str(e)}"
