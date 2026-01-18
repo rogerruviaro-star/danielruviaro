@@ -31,6 +31,7 @@ app = Flask(__name__)
 # Configurações Z-API
 ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
 ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
+ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN", "")  # Token de segurança (opcional mas recomendado)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # URL base para envio (Z-API)
@@ -57,7 +58,12 @@ def send_message_zapi(phone, text):
             "phone": phone,
             "message": text
         }
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json"
+        }
+        # Adiciona Client-Token se configurado
+        if ZAPI_CLIENT_TOKEN:
+            headers["Client-Token"] = ZAPI_CLIENT_TOKEN
         
         logging.info(f"📤 Enviando para Z-API: URL={url}")
         logging.info(f"📤 Payload: {json.dumps(payload)}")
