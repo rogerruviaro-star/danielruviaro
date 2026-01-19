@@ -127,7 +127,8 @@ class GPTRuviaroBrain:
             self._save_interaction(reply, 'bot')
             
             # Detecção de Handoff (Passagem de Bastão)
-            if "Um atendente já te responde" in reply or "um de nossos vendedores já te chama" in reply:
+            # Agora só para se tiver o emoji 🟢 ou menção explícita a humano
+            if "🟢" in reply or "atendente humano vai conferir" in reply or "[HANDOFF]" in reply:
                 # Salva marcador de handoff (poderíamos salvar no banco mas por enquanto basta parar aqui)
                 self.history.append({"role": "system", "content": "[HANDOFF AGORA - AGENTE PAUSADO]"})
                 
@@ -163,7 +164,8 @@ class GPTRuviaroBrain:
             
             if row:
                 last_msg = row[0]
-                if "Um atendente já te responde" in last_msg or "um de nossos vendedores já te chama" in last_msg:
+                # Verifica a nova condição de parada
+                if "🟢" in last_msg or "atendente humano vai conferir" in last_msg:
                     return False
         except:
             pass
