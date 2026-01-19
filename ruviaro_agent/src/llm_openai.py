@@ -100,6 +100,35 @@ class GPTRuviaroBrain:
             # Monta a conversa completa
             conversation = f"{self.system_prompt}\n\n## Conversa com o cliente:\n"
             
+            # Lógica de Horário de Funcionamento
+            now = datetime.datetime.now()
+            # Fuso Horário Brasil (ajuste simplificado UTC-3)
+            now = now - datetime.timedelta(hours=3) 
+            weekday = now.weekday() # 0=Seg, 6=Dom
+            hour = now.hour
+            minute = now.minute
+            current_time = now.strftime("%H:%M")
+            day_name = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"][weekday]
+            
+            is_open = False
+            if weekday == 6: # Domingo
+                is_open = False
+            elif weekday == 5: # Sábado
+                if 8 <= hour < 12:
+                    is_open = True
+            else: # Seg-Sex
+                if (8 <= hour < 12) or (13 <= hour < 18): # Simplificando 13:30 para 13:00-18:00 para margem, ou ajustando preciso
+                    if hour == 13 and minute < 30:
+                         is_open = False # Almoco
+                    else:
+                         is_open = True
+            
+            store_status_prompt = f"\n[SISTEMA: HORA ATUAL: {day_name} {current_time}. STATUS DA LOJA: {'ABERTA' if is_open else 'FECHADA'}.]"
+            if not is_open:
+                store_status_prompt += "\n[INSTRUÇÃO FORA DE HORÁRIO: A loja está fechada. Avise o cliente que estamos fora do expediente e que passará o preço amanhã/segunda. MAS CONTINUE A TRIAGEM NORMALMENTE. Pergunte carro, ano, peça. Deixe tudo pronto para amanhã. Não pare de atender, apenas avise do delay no preço.]"
+
+            conversation += store_status_prompt
+            
             # Adiciona todo o histórico
             last_assistant_msgs = []
             for msg in self.history:
