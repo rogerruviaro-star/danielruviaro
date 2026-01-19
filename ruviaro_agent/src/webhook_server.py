@@ -150,22 +150,10 @@ def zapi_webhook_handler():
         if is_group or (phone and "@g.us" in phone):
             logging.info(f"🚫 Ignorando mensagem de grupo: {phone}")
             return jsonify({"status": "ignored_group"}), 200
-        
-        # INTERVENÇÃO HUMANA DETECTADA (Desativado temporariamente para evitar auto-pause em mensagens da API)
-        if from_me:
-            logging.info(f"🛑 Mensagem própria detectada (fromMe) de {phone}. Salvando no histórico.")
-            if HAS_BRAIN and message_text:
-               try:
-                   agent = get_brain(phone)
-                   # Salva como 'bot' para aparecer como assistant no histórico do LLM
-                   agent._save_interaction(message_text, 'bot') 
-               except Exception as e:
-                   logging.error(f"Erro ao salvar msg humana: {e}")
-            
-            return jsonify({"status": "ignored_me"}), 200
-        
+
         message_text = None
         
+        # 1. Extração da Mensagem (Texto, Áudio ou Imagem)
         # Mensagem de texto
         if 'text' in data and 'message' in data['text']:
             message_text = data['text']['message']
@@ -180,15 +168,25 @@ def zapi_webhook_handler():
                 if message_text:
                     logging.info(f"🎤 [Z-API] Transcrição de {sender_name}: {message_text}")
                 else:
-                    # Se falhou a transcrição, pede para digitar
                     send_message_zapi(phone, "Não consegui entender o áudio, pode digitar por favor?")
                     return jsonify({"status": "audio_failed"}), 200
 
         # Mensagem de Imagem
         elif 'image' in data:
             logging.info(f"📸 [Z-API] Imagem recebida de {sender_name}")
-            # Injeta contexto de imagem para o agente reagir com handoff
             message_text = "[O CLIENTE ENVIOU UMA FOTO DO CARRO/PEÇA. AGRADEÇA E USE A BOLINHA VERDE 🟢 PARA CHAMAR O HUMANO CONFERIR]"
+
+        # 2. Verifica se é intervenção humana (SAVE ONLY)
+        if from_me:
+            logging.info(f"🛑 Mensagem própria detectada (fromMe) de {phone}. Salvando no histórico.")
+            if HAS_BRAIN and message_text:
+               try:
+                   agent = get_brain(phone)
+                   agent._save_interaction(message_text, 'bot') # Salva como bot/assistant
+               except Exception as e:
+                   logging.error(f"Erro ao salvar msg humana: {e}")
+            
+            return jsonify({"status": "ignored_me"}), 200
         
         # Processa a mensagem (texto ou áudio transcrito)
         if message_text and HAS_BRAIN:
