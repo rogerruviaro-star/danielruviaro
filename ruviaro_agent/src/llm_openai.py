@@ -9,7 +9,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
 class GPTRuviaroBrain:
-    def __init__(self, model="gemini-pro", sender_id=None):
+    def __init__(self, model="gemini-1.5-flash-latest", sender_id=None):
         self.model = genai.GenerativeModel(model)
         self.sender_id = sender_id
         self.history = []
