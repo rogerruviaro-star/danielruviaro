@@ -121,6 +121,22 @@ def zapi_webhook_handler():
             
             return jsonify({"status": "success"}), 200
 
+        # Verifica se é mensagem de áudio
+        if 'audio' in data:
+            phone = data.get('phone')
+            from_me = data.get('fromMe', False)
+            
+            if from_me:
+                return jsonify({"status": "ignored_me"}), 200
+            
+            logging.info(f"🎤 [Z-API] Áudio recebido de {phone}")
+            
+            # Pede para digitar
+            response_text = "Opa! Aqui na loja tá um pouco barulhento e não consegui ouvir bem o áudio. Pode me passar por escrito o que você precisa?"
+            send_message_zapi(phone, response_text)
+            
+            return jsonify({"status": "audio_handled"}), 200
+
         return jsonify({"status": "ignored_type"}), 200
 
     except Exception as e:
