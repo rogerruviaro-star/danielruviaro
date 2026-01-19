@@ -5,8 +5,11 @@ import sys
 import json
 import logging
 import datetime
+import tempfile
+import base64
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
+from google import genai
 
 # Carrega variáveis do arquivo .env
 load_dotenv()
@@ -31,11 +34,14 @@ app = Flask(__name__)
 # Configurações Z-API
 ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
 ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
-ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN", "")  # Token de segurança (opcional mas recomendado)
+ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # URL base para envio (Z-API)
 BASE_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}"
+
+# Cliente Gemini para transcrição
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 logging.info(f"🔧 Z-API Instance: {ZAPI_INSTANCE_ID}")
 logging.info(f"🔧 Z-API Base URL: {BASE_URL}")
@@ -50,6 +56,44 @@ def get_brain(sender_id):
         sessions[sender_id] = GPTRuviaroBrain(sender_id=sender_id) 
     return sessions[sender_id]
 
+def transcribe_audio(audio_url):
+    """Baixa e transcreve áudio usando Gemini."""
+    try:
+        # Baixa o áudio
+        response = requests.get(audio_url)
+        if response.status_code != 200:
+            logging.error(f"Erro ao baixar áudio: {response.status_code}")
+            return None
+        
+        audio_data = response.content
+        audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+        
+        # Usa Gemini para transcrever
+        transcription_response = gemini_client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[
+                {
+                    "parts": [
+                        {"text": "Transcreva este áudio em português. Retorne APENAS o texto transcrito, sem formatação adicional:"},
+                        {
+                            "inline_data": {
+                                "mime_type": "audio/ogg",
+                                "data": audio_base64
+                            }
+                        }
+                    ]
+                }
+            ]
+        )
+        
+        transcription = transcription_response.text.strip()
+        logging.info(f"🎤 Transcrição: {transcription}")
+        return transcription
+        
+    except Exception as e:
+        logging.error(f"Erro na transcrição: {e}")
+        return None
+
 def send_message_zapi(phone, text):
     """Envia mensagem de TEXTO via Z-API."""
     try:
@@ -61,7 +105,6 @@ def send_message_zapi(phone, text):
         headers = {
             "Content-Type": "application/json"
         }
-        # Adiciona Client-Token se configurado
         if ZAPI_CLIENT_TOKEN:
             headers["Client-Token"] = ZAPI_CLIENT_TOKEN
         
@@ -83,60 +126,53 @@ def zapi_webhook_handler():
     try:
         data = request.json
         
-        # Log em arquivo para garantir (com encoding utf-8)
+        # Log em arquivo
         with open("debug_log.txt", "a", encoding="utf-8") as f:
             f.write(f"\n[{datetime.datetime.now()}] RECEBIDO: {json.dumps(data, ensure_ascii=False)}\n")
         
         logging.info(f"[DEBUG] DADOS CHEGARAM!")
         
-        # Verifica se é mensagem de Text
-        # Z-API estrutura: { "phone": "55...", "text": { "message": "ola" }, ... }
+        phone = data.get('phone')
+        from_me = data.get('fromMe', False)
         
+        # Ignora minhas próprias mensagens
+        if from_me:
+            logging.info(f"Ignorando mensagem própria de {phone}")
+            return jsonify({"status": "ignored_me"}), 200
+        
+        message_text = None
+        
+        # Mensagem de texto
         if 'text' in data and 'message' in data['text']:
-            phone = data.get('phone')
             message_text = data['text']['message']
-            from_me = data.get('fromMe', False)
-
-            # Ignora minhas próprias mensagens
-            if from_me:
-                logging.info(f"Ignorando mensagem própria de {phone}")
-                return jsonify({"status": "ignored_me"}), 200
-
-            logging.info(f"📩 [Z-API] De {phone}: {message_text}")
-
-            # Processa com o Cérebro (Gemini)
-            if HAS_BRAIN:
-                try:
-                    agent = get_brain(phone)
-                    response_text = agent.process_message(message_text)
-                    logging.info(f"🧠 Resposta do Gemini: {response_text[:100]}...")
-                except Exception as e:
-                    logging.error(f"❌ Erro no Brain: {e}")
-                    response_text = "Opa! Aqui é o Beto da Ruviaro. Tô com uma instabilidade aqui, pode repetir?"
-            else:
-                response_text = "Olá! Aqui é o Beto. Em que posso ajudar?"
-
-            # Envia resposta
-            send_message_zapi(phone, response_text)
+            logging.info(f"📩 [Z-API] Texto de {phone}: {message_text}")
+        
+        # Mensagem de áudio
+        elif 'audio' in data:
+            audio_url = data['audio'].get('audioUrl') or data['audio'].get('url')
+            if audio_url:
+                logging.info(f"🎤 [Z-API] Áudio recebido de {phone}, transcrevendo...")
+                message_text = transcribe_audio(audio_url)
+                if message_text:
+                    logging.info(f"🎤 [Z-API] Transcrição de {phone}: {message_text}")
+                else:
+                    # Se falhou a transcrição, pede para digitar
+                    send_message_zapi(phone, "Não consegui entender o áudio, pode digitar por favor?")
+                    return jsonify({"status": "audio_failed"}), 200
+        
+        # Processa a mensagem (texto ou áudio transcrito)
+        if message_text and HAS_BRAIN:
+            try:
+                agent = get_brain(phone)
+                response_text = agent.process_message(message_text)
+                logging.info(f"🧠 Resposta: {response_text[:100]}...")
+            except Exception as e:
+                logging.error(f"❌ Erro no Brain: {e}")
+                response_text = "Desculpe, tive um problema técnico. Pode repetir?"
             
+            send_message_zapi(phone, response_text)
             return jsonify({"status": "success"}), 200
-
-        # Verifica se é mensagem de áudio
-        if 'audio' in data:
-            phone = data.get('phone')
-            from_me = data.get('fromMe', False)
-            
-            if from_me:
-                return jsonify({"status": "ignored_me"}), 200
-            
-            logging.info(f"🎤 [Z-API] Áudio recebido de {phone}")
-            
-            # Pede para digitar
-            response_text = "Opa! Aqui na loja tá um pouco barulhento e não consegui ouvir bem o áudio. Pode me passar por escrito o que você precisa?"
-            send_message_zapi(phone, response_text)
-            
-            return jsonify({"status": "audio_handled"}), 200
-
+        
         return jsonify({"status": "ignored_type"}), 200
 
     except Exception as e:
