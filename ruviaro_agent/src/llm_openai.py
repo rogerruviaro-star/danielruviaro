@@ -166,6 +166,14 @@ class GPTRuviaroBrain:
             if reply.startswith("Daniel:"):
                 reply = reply[7:].strip()
             
+            # Sanitização Agressiva (Evitar Alucinação de Diálogo)
+            # Se o modelo começar a simular a resposta do cliente, corta imediatamente.
+            if "Cliente:" in reply:
+                reply = reply.split("Cliente:")[0].strip()
+            
+            # Remove aspas se o modelo colocar a resposta entre aspas
+            reply = reply.strip('"').strip("'")
+            
             # Adiciona ao histórico e salva
             self.history.append({"role": "assistant", "content": reply})
             self._save_interaction(reply, 'bot')
