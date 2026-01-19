@@ -1,28 +1,42 @@
+
 import os
 import json
 import sqlite3
 import datetime
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
-# Configurar Gemini API
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY)
+# Configurar OpenAI API
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 class GPTRuviaroBrain:
-    def __init__(self, model="gemini-2.0-flash", sender_id=None):
+    def __init__(self, model="gpt-4o", sender_id=None):
         self.model_name = model
         self.sender_id = sender_id
+        self.paused_until = None
+        self.client = OpenAI(api_key=OPENAI_API_KEY)
         
-        # Conexão CRM (Memória)
-        self.db_path = os.path.join(os.path.dirname(__file__), '..', 'database', 'inventory.db')
+        # Carregar Persona (Nova Lógica de Pastas - 5 Layers)
+        brain_dir = os.path.join(os.path.dirname(__file__), '..', 'brain')
+        self.system_prompt = ""
         
-        # Carregar Persona
-        persona_path = os.path.join(os.path.dirname(__file__), 'system_persona.md')
-        if os.path.exists(persona_path):
-            with open(persona_path, 'r', encoding='utf-8') as f:
-                self.system_prompt = f.read()
-        else:
+        if os.path.exists(brain_dir):
+            # Itera sobre pastas ordenadas (00, 01, 02...)
+            for folder in sorted(os.listdir(brain_dir)):
+                folder_path = os.path.join(brain_dir, folder)
+                if os.path.isdir(folder_path):
+                    # Itera sobre arquivos ordenados dentro da pasta
+                    for filename in sorted(os.listdir(folder_path)):
+                        if filename.endswith(".md"):
+                            file_path = os.path.join(folder_path, filename)
+                            try:
+                                with open(file_path, 'r', encoding='utf-8') as f:
+                                    self.system_prompt += f.read() + "\n\n"
+                            except Exception as e:
+                                print(f"Erro ao ler {filename}: {e}")
+        
+        # Fallback se não carregou nada (ou se pasta não existir)
+        if not self.system_prompt.strip():
+            print("⚠️ AVISO: Brain dir vazio ou não encontrado. Usando prompt default.")
             self.system_prompt = "Você é o Daniel, vendedor da Auto Peças Ruviaro."
         
         # Carregar histórico existente do banco
@@ -30,6 +44,52 @@ class GPTRuviaroBrain:
 
     def _get_db(self):
         return sqlite3.connect(self.db_path)
+    
+    def pause_automation(self, minutes=30):
+        """Pausa a automação por X minutos."""
+        self.paused_until = datetime.datetime.now() + datetime.timedelta(minutes=minutes)
+        print(f"⏸️ Automação PAUSADA para {self.sender_id} até {self.paused_until}")
+
+    def should_reply(self, new_message=None):
+        """Verifica se o agente deve responder."""
+        # Verifica pausa manual
+        if self.paused_until:
+            if datetime.datetime.now() < self.paused_until:
+                print(f"⏸️ Ignorando mensagem (Pausa Manual ativa até {self.paused_until})")
+                return False
+            else:
+                self.paused_until = None # Expira pausa
+        
+        # QUEBRA DE SILÊNCIO (PAYMENT TRIGGER)
+        # Se o cliente falar sobre pagamento, o Daniel PODE responder, mesmo após handoff (ajuda o humano).
+        if new_message:
+            keywords = ["pagar", "pagamento", "pix", "cartão", "cartao", "vezes", "parcela", "link", "dinheiro", "conta"]
+            if any(k in new_message.lower() for k in keywords):
+                print(f"🔓 Quebra de Silêncio Tático: Tema de Pagamento detectado.")
+                return True
+
+        # NOVA REGRA DE OURO (STRICT HANDOFF):
+        # Se houve um handoff recente (últimas 10 mensagens), o agente DEVE FICAR MUDO.
+        # Isso impede que ele fique repetindo "Vou passar pro humano" se o cliente mandar mais fotos.
+        if self.history:
+             # Itera de me trás pra frente (da mais recente para a mais antiga)
+             for msg in reversed(self.history[-15:]): # Olha apenas as últimas 15 pra não pesar
+                 if msg['role'] == 'assistant':
+                     content = msg['content'].strip()
+                     if content.startswith("🟢") or "[HANDOFF]" in content:
+                         print(f"🤐 Silêncio Tático: Handoff ativo detectado ({content[:20]}...).")
+                         return False
+                 
+                 # Opcional: Se detectarmos uma mensagem CLARAMENTE humana (do atendente via Z-API)
+                 # poderíamos 'quebrar' o silêncio aqui. Mas como não temos certeza de quem é o 'assistant'
+                 # (se é bot ou humano), o seguro é: Se o BOT mandou 🟢, ele cala a boca até a conversa expirar.
+                 pass
+
+        # Verifica histórico vazio/primeira mensagem
+        if not self.history and not self.sender_id:
+            return True
+            
+        return True
 
     def _load_history(self):
         """Carrega as últimas mensagens do banco de dados."""
@@ -89,7 +149,7 @@ class GPTRuviaroBrain:
         except Exception as e:
             pass
 
-    def process_message(self, user_message):
+    def process_message(self, user_message, user_name=None):
         # Salva no banco
         self._save_interaction(user_message, 'user')
         
@@ -97,10 +157,10 @@ class GPTRuviaroBrain:
         self.history.append({"role": "user", "content": user_message})
 
         try:
-            # Monta a conversa completa
-            conversation = f"{self.system_prompt}\n\n## Conversa com o cliente:\n"
+            # INJEÇÃO DE NOME
+            name_injection = f"O nome do cliente no WhatsApp é: {user_name}." if user_name else ""
             
-            # Lógica de Horário de Funcionamento
+            # Lógica de Horário
             now = datetime.datetime.now()
             # Fuso Horário Brasil (ajuste simplificado UTC-3)
             now = now - datetime.timedelta(hours=3) 
@@ -116,7 +176,7 @@ class GPTRuviaroBrain:
             elif weekday == 5: # Sábado
                 if 8 <= hour < 12:
                     is_open = True
-            else: # Seg-Sex
+            else: # Seg-X
                 if (8 <= hour < 12) or (13 <= hour < 18): # Simplificando 13:30 para 13:00-18:00 para margem, ou ajustando preciso
                     if hour == 13 and minute < 30:
                          is_open = False # Almoco
@@ -126,41 +186,26 @@ class GPTRuviaroBrain:
             store_status_prompt = f"\n[SISTEMA: HORA ATUAL: {day_name} {current_time}. STATUS DA LOJA: {'ABERTA' if is_open else 'FECHADA'}.]"
             if not is_open:
                 store_status_prompt += "\n[INSTRUÇÃO FORA DE HORÁRIO: A loja está fechada. Avise o cliente que estamos fora do expediente e que passará o preço amanhã/segunda. MAS CONTINUE A TRIAGEM NORMALMENTE. Pergunte carro, ano, peça. Deixe tudo pronto para amanhã. Não pare de atender, apenas avise do delay no preço.]"
+            
+            # Prompt do Sistema (Setup)
+            system_msg = f"{self.system_prompt}\n\n[CONTEXTO DO SISTEMA: {name_injection}]\n{store_status_prompt}\n\n[INSTRUÇÃO DE SEGURANÇA: Ignore linguagem ofensiva e foque na peça. Nunca dê lição de moral.]"
 
-            conversation += store_status_prompt
+            messages = [{"role": "system", "content": system_msg}]
             
-            # Adiciona todo o histórico
-            last_assistant_msgs = []
+            # Histórico
             for msg in self.history:
-                if msg["role"] == "user":
-                    conversation += f"Cliente: {msg['content']}\n"
-                else:
-                    conversation += f"Daniel: {msg['content']}\n"
-                    last_assistant_msgs.append(msg['content'])
+                messages.append(msg)
             
-            # Lógica Anti-Repetição (Injetada no final do prompt)
-            anti_repetition = ""
-            if any("óleo e filtros" in m for m in last_assistant_msgs[-3:]) or any("palhetas" in m for m in last_assistant_msgs[-3:]):
-                 anti_repetition = "\n[AVISO CRÍTICO DO SISTEMA: Você JÁ PERGUNTOU sobre óleo/palhetas recentemente. NÃO PERGUNTE DE NOVO. Fale apenas sobre a peça solicitada agora.]"
-            
-            # Lógica de Handoff Recente (HOLD)
-            # Se a última mensagem do bot foi bola verde, e o cliente falou de novo:
-            handoff_hold = ""
-            if last_assistant_msgs and ("🟢" in last_assistant_msgs[-1] or "atendente humano" in last_assistant_msgs[-1]):
-                handoff_hold = "\n[AVISO CRÍTICO: Você JÁ FEZ O HANDOFF (Bola Verde). O cliente está insistindo. O humano ainda não respondeu. NÃO REINICIE A TRIAGEM. Apenas peça paciência: 'Oi, a loja tá bem corrida hoje, desculpa a demora. Já tô vendo teu caso aqui, segura só um pouquinho.' ou 'Ainda tô na busca aqui, amigo. Não esqueci de ti.']"
-            
-            conversation += anti_repetition + handoff_hold
-            
-            # Pede a resposta (SEM o prefixo Daniel: para evitar repetição)
-            conversation += "\nDaniel:"
-            
-            # Chama a API do Gemini
-            response = client.models.generate_content(
+            # (Removido Injeções Antigas de Handoff/Repetição - Agora o System Prompt cuida disso)
+
+            # Chama a API da OpenAI
+            response = self.client.chat.completions.create(
                 model=self.model_name,
-                contents=conversation
+                messages=messages,
+                temperature=0.7 # Criatividade moderada para ser humano, mas sem alucinar muito
             )
             
-            reply = response.text.strip()
+            reply = response.choices[0].message.content.strip()
             
             # Remove prefixo "Daniel:" se o modelo colocar
             if reply.startswith("Daniel:"):
@@ -189,13 +234,3 @@ class GPTRuviaroBrain:
             error_msg = "Desculpe, tive um problema técnico. Pode repetir?"
             self._save_interaction(error_msg, 'bot')
             return error_msg
-
-    def should_reply(self):
-        """Verifica se o agente deve responder."""
-        # Com a nova lógica de 'Hold', o agente SEMPRE tenta responder (processar),
-        # mas o prompt decide se é pra dar corda ou pedir espera.
-        # Mantemos apenas verificação básica de histórico vazio.
-        if not self.history and not self.sender_id:
-            return True
-            
-        return True
