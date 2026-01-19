@@ -170,6 +170,12 @@ def zapi_webhook_handler():
         if message_text and HAS_BRAIN:
             try:
                 agent = get_brain(phone)
+                
+                # Verifica se o agente deve responder (Handoff)
+                if not agent.should_reply():
+                    logging.info(f"🚫 Handoff ativo para {phone}. Agente em silêncio.")
+                    return jsonify({"status": "handoff_active"}), 200
+
                 response_text = agent.process_message(message_text)
                 logging.info(f"🧠 Resposta: {response_text[:100]}...")
             except Exception as e:

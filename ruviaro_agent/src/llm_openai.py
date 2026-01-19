@@ -126,9 +126,46 @@ class GPTRuviaroBrain:
             self.history.append({"role": "assistant", "content": reply})
             self._save_interaction(reply, 'bot')
             
+            # Detecção de Handoff (Passagem de Bastão)
+            if "Um atendente já te responde" in reply or "um de nossos vendedores já te chama" in reply:
+                # Salva marcador de handoff (poderíamos salvar no banco mas por enquanto basta parar aqui)
+                self.history.append({"role": "system", "content": "[HANDOFF AGORA - AGENTE PAUSADO]"})
+                
             return reply
 
         except Exception as e:
             error_msg = "Desculpe, tive um problema técnico. Pode repetir?"
             self._save_interaction(error_msg, 'bot')
             return error_msg
+
+    def should_reply(self):
+        """Verifica se o agente deve responder."""
+        if not self.history:
+            return True
+            
+        # Verifica se o último handoff foi recente (nas últimas 3 mensagens)
+        for msg in self.history[-3:]:
+            if "role" in msg and msg["role"] == "system" and "HANDOFF AGORA" in msg["content"]:
+                return False
+                
+        # Verifica no histórico do banco também
+        try:
+            conn = self._get_db()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT message FROM interactions 
+                WHERE customer_id = (SELECT id FROM customers WHERE phone = ?) 
+                AND type = 'bot' 
+                ORDER BY id DESC LIMIT 1
+            """, (self.sender_id,))
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                last_msg = row[0]
+                if "Um atendente já te responde" in last_msg or "um de nossos vendedores já te chama" in last_msg:
+                    return False
+        except:
+            pass
+            
+        return True
