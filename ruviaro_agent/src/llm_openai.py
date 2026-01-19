@@ -13,7 +13,7 @@ class GPTRuviaroBrain:
     def __init__(self, model="gemini-2.0-flash", sender_id=None):
         self.model_name = model
         self.sender_id = sender_id
-        self.history = []
+        self.history = []  # Histórico da conversa atual
         
         # Conexão CRM (Memória)
         self.db_path = os.path.join(os.path.dirname(__file__), '..', 'database', 'inventory.db')
@@ -27,12 +27,9 @@ class GPTRuviaroBrain:
             with open(persona_path, 'r', encoding='utf-8') as f:
                 base_prompt = f.read()
         else:
-            base_prompt = "Você é o Beto, assistente da Ruviaro Auto Peças."
+            base_prompt = "Você é o Daniel, vendedor da Auto Peças Ruviaro."
             
-        # Injeta Memória no Prompt
-        memory_injection = f"\n\n### DADOS DO CLIENTE (MEMÓRIA)\n{self.customer_context}"
-        sales_injection = "\n\n### INSTRUÇÃO DE VENDA CRÍTICA\nSe o cliente pedir uma marca específica (ex: TRW) e o estoque tiver outra (ex: Viemar), você DEVE argumentar que a nossa marca é melhor (mais reforçada, melhor garantia, feita pro Brasil). Nunca perca a venda por marca."
-        self.system_prompt = base_prompt + sales_injection + memory_injection
+        self.system_prompt = base_prompt
 
     def _get_db(self):
         return sqlite3.connect(self.db_path)
@@ -40,7 +37,7 @@ class GPTRuviaroBrain:
     def _load_customer_memory(self):
         """Carrega dados do CRM para o prompt."""
         if not self.sender_id:
-            return "Cliente Novo (Sem ID)."
+            return ""
             
         try:
             conn = self._get_db()
@@ -50,20 +47,14 @@ class GPTRuviaroBrain:
             row = cursor.fetchone()
             
             if row:
-                info = f"Nome: {row[0] or 'Amigo'}\nVeículo: {row[1] or 'Não identificado'}\nNível Confiança: {row[2]}\nNotas: {row[3]}"
-                
-                cursor.execute("SELECT message, type FROM interactions WHERE customer_id = (SELECT id FROM customers WHERE phone = ?) ORDER BY id DESC LIMIT 3", (self.sender_id,))
-                last_msgs = cursor.fetchall()
-                if last_msgs:
-                    history_summary = "\nÚltimas conversas:\n" + "\n".join([f"- {m[1]}: {m[0][:50]}..." for m in last_msgs])
-                    info += history_summary
+                info = f"Nome do cliente: {row[0] or 'Desconhecido'}\nVeículo: {row[1] or 'Não informado'}"
                 return info
             else:
                 cursor.execute("INSERT INTO customers (phone) VALUES (?)", (self.sender_id,))
                 conn.commit()
-                return "Cliente Novo. Tente descobrir o nome e o carro dele."
+                return ""
         except Exception as e:
-            return f"Erro ao carregar memória: {e}"
+            return ""
         finally:
             if 'conn' in locals(): conn.close()
 
@@ -82,28 +73,47 @@ class GPTRuviaroBrain:
 
     def process_message(self, user_message):
         # Salva interação do usuário
-        if isinstance(user_message, dict) and user_message.get('type') == 'image':
-            self._save_interaction(f"[IMAGEM] {user_message.get('text', '')}", 'user')
-            user_text = user_message.get('text', 'Analise esta imagem.')
-        else:
-            self._save_interaction(user_message, 'user')
-            user_text = user_message
+        self._save_interaction(user_message, 'user')
+        
+        # Adiciona ao histórico da sessão
+        self.history.append({"role": "user", "content": user_message})
 
         try:
-            # Monta prompt completo
-            full_prompt = f"{self.system_prompt}\n\nMensagem do cliente: {user_text}"
+            # Monta o histórico de conversa
+            conversation = f"{self.system_prompt}\n\n"
             
-            # Chama a API do Gemini com o novo pacote
+            # Adiciona contexto do cliente se houver
+            if self.customer_context:
+                conversation += f"## Dados do cliente:\n{self.customer_context}\n\n"
+            
+            # Adiciona histórico de mensagens
+            conversation += "## Conversa:\n"
+            for msg in self.history:
+                if msg["role"] == "user":
+                    conversation += f"Cliente: {msg['content']}\n"
+                else:
+                    conversation += f"Daniel: {msg['content']}\n"
+            
+            # Pede a resposta
+            conversation += "Daniel:"
+            
+            # Chama a API do Gemini
             response = client.models.generate_content(
                 model=self.model_name,
-                contents=full_prompt
+                contents=conversation
             )
             
-            reply = response.text
+            reply = response.text.strip()
             
+            # Remove prefixo "Daniel:" se o modelo colocar
+            if reply.startswith("Daniel:"):
+                reply = reply[7:].strip()
+            
+            # Adiciona ao histórico
             self.history.append({"role": "assistant", "content": reply})
             self._save_interaction(reply, 'bot')
+            
             return reply
 
         except Exception as e:
-            return f"Opa, falhou aqui meu sistema: {str(e)}"
+            return f"Desculpe, tive um problema técnico. Pode repetir?"
