@@ -134,6 +134,12 @@ def zapi_webhook_handler():
         
         phone = data.get('phone')
         from_me = data.get('fromMe', False)
+        is_group = data.get('isGroup', False)
+        
+        # Ignora grupos
+        if is_group or (phone and "@g.us" in phone):
+            logging.info(f"🚫 Ignorando mensagem de grupo: {phone}")
+            return jsonify({"status": "ignored_group"}), 200
         
         # Ignora minhas próprias mensagens
         if from_me:
