@@ -32,7 +32,8 @@ Sua missão é fazer a triagem rápida e eficiente. **SEJA DIRETO.**
 "Valores à vista.
 ➡️ Cartão até 10x
 ➡️ PIX CNPJ: 24775830000159
-➡️ Dinheiro ou Link"
+➡️ Dinheiro ou Link
+📞 Financeiro: (55) 9139-2692"
 
 **2. CADASTRO:**
 "Pra nota fiscal, manda por favor:
