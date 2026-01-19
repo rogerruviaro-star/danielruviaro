@@ -114,7 +114,13 @@ class GPTRuviaroBrain:
             if any("óleo e filtros" in m for m in last_assistant_msgs[-3:]) or any("palhetas" in m for m in last_assistant_msgs[-3:]):
                  anti_repetition = "\n[AVISO CRÍTICO DO SISTEMA: Você JÁ PERGUNTOU sobre óleo/palhetas recentemente. NÃO PERGUNTE DE NOVO. Fale apenas sobre a peça solicitada agora.]"
             
-            conversation += anti_repetition
+            # Lógica de Handoff Recente (HOLD)
+            # Se a última mensagem do bot foi bola verde, e o cliente falou de novo:
+            handoff_hold = ""
+            if last_assistant_msgs and ("🟢" in last_assistant_msgs[-1] or "atendente humano" in last_assistant_msgs[-1]):
+                handoff_hold = "\n[AVISO CRÍTICO: Você JÁ FEZ O HANDOFF (Bola Verde). O cliente está insistindo. O humano ainda não respondeu. NÃO REINICIE A TRIAGEM. Apenas peça paciência: 'Oi, a loja tá bem corrida hoje, desculpa a demora. Já tô vendo teu caso aqui, segura só um pouquinho.' ou 'Ainda tô na busca aqui, amigo. Não esqueci de ti.']"
+            
+            conversation += anti_repetition + handoff_hold
             
             # Pede a resposta (SEM o prefixo Daniel: para evitar repetição)
             conversation += "\nDaniel:"
@@ -135,11 +141,10 @@ class GPTRuviaroBrain:
             self.history.append({"role": "assistant", "content": reply})
             self._save_interaction(reply, 'bot')
             
-            # Detecção de Handoff (Passagem de Bastão)
-            # Agora só para se tiver o emoji 🟢 ou menção explícita a humano
+            # Detecção de Handoff (Mantemos o log, mas não bloqueamos mais permanentemente via banco, pois o prompt segura)
             if "🟢" in reply or "atendente humano vai conferir" in reply or "[HANDOFF]" in reply:
-                # Salva marcador de handoff (poderíamos salvar no banco mas por enquanto basta parar aqui)
-                self.history.append({"role": "system", "content": "[HANDOFF AGORA - AGENTE PAUSADO]"})
+                # Marcador apenas para log interno se precisar
+                pass
                 
             return reply
 
@@ -150,33 +155,10 @@ class GPTRuviaroBrain:
 
     def should_reply(self):
         """Verifica se o agente deve responder."""
-        if not self.history:
+        # Com a nova lógica de 'Hold', o agente SEMPRE tenta responder (processar),
+        # mas o prompt decide se é pra dar corda ou pedir espera.
+        # Mantemos apenas verificação básica de histórico vazio.
+        if not self.history and not self.sender_id:
             return True
-            
-        # Verifica se o último handoff foi recente (nas últimas 3 mensagens)
-        for msg in self.history[-3:]:
-            if "role" in msg and msg["role"] == "system" and "HANDOFF AGORA" in msg["content"]:
-                return False
-                
-        # Verifica no histórico do banco também
-        try:
-            conn = self._get_db()
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT message FROM interactions 
-                WHERE customer_id = (SELECT id FROM customers WHERE phone = ?) 
-                AND type = 'bot' 
-                ORDER BY id DESC LIMIT 1
-            """, (self.sender_id,))
-            row = cursor.fetchone()
-            conn.close()
-            
-            if row:
-                last_msg = row[0]
-                # Verifica a nova condição de parada
-                if "🟢" in last_msg or "atendente humano vai conferir" in last_msg:
-                    return False
-        except:
-            pass
             
         return True
