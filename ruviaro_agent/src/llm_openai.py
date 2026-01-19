@@ -101,14 +101,23 @@ class GPTRuviaroBrain:
             conversation = f"{self.system_prompt}\n\n## Conversa com o cliente:\n"
             
             # Adiciona todo o histórico
+            last_assistant_msgs = []
             for msg in self.history:
                 if msg["role"] == "user":
                     conversation += f"Cliente: {msg['content']}\n"
                 else:
                     conversation += f"Daniel: {msg['content']}\n"
+                    last_assistant_msgs.append(msg['content'])
+            
+            # Lógica Anti-Repetição (Injetada no final do prompt)
+            anti_repetition = ""
+            if any("óleo e filtros" in m for m in last_assistant_msgs[-3:]) or any("palhetas" in m for m in last_assistant_msgs[-3:]):
+                 anti_repetition = "\n[AVISO CRÍTICO DO SISTEMA: Você JÁ PERGUNTOU sobre óleo/palhetas recentemente. NÃO PERGUNTE DE NOVO. Fale apenas sobre a peça solicitada agora.]"
+            
+            conversation += anti_repetition
             
             # Pede a resposta (SEM o prefixo Daniel: para evitar repetição)
-            conversation += "Daniel:"
+            conversation += "\nDaniel:"
             
             # Chama a API do Gemini
             response = client.models.generate_content(

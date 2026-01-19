@@ -10,6 +10,8 @@ import base64
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from google import genai
+import time
+import random
 
 # Carrega variáveis do arquivo .env
 load_dotenv()
@@ -188,6 +190,11 @@ def zapi_webhook_handler():
                 logging.error(f"❌ Erro no Brain: {e}")
                 response_text = "Desculpe, tive um problema técnico. Pode repetir?"
             
+            # Delay "Humano" (3 a 7 segundos)
+            delay = random.randint(3, 7)
+            logging.info(f"⏳ Aguardando {delay}s para parecer humano...")
+            time.sleep(delay)
+
             send_message_zapi(phone, response_text)
             return jsonify({"status": "success"}), 200
         
