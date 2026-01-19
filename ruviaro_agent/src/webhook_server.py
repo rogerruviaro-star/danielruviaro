@@ -165,6 +165,12 @@ def zapi_webhook_handler():
                     # Se falhou a transcrição, pede para digitar
                     send_message_zapi(phone, "Não consegui entender o áudio, pode digitar por favor?")
                     return jsonify({"status": "audio_failed"}), 200
+
+        # Mensagem de Imagem
+        elif 'image' in data:
+            logging.info(f"📸 [Z-API] Imagem recebida de {phone}")
+            # Injeta contexto de imagem para o agente reagir com handoff
+            message_text = "[O CLIENTE ENVIOU UMA FOTO DO CARRO/PEÇA. AGRADEÇA E USE A BOLINHA VERDE 🟢 PARA CHAMAR O HUMANO CONFERIR]"
         
         # Processa a mensagem (texto ou áudio transcrito)
         if message_text and HAS_BRAIN:
