@@ -165,6 +165,30 @@ class GPTRuviaroBrain:
             MASTER_NUMBER = "5555996839992"
             if self.sender_id and MASTER_NUMBER in self.sender_id:
                  name_injection += "\n\n[🚨 SISTEMA: MENSAGEM DO PROPRIETÁRIO (ROGER) DETECTADA. 🚨]\n[SISTEMA: ATIVAR MODO COMANDO. NÃO AGIR COMO VENDEDOR. OBEDECER ORDENS.]"
+                 
+                 # INTERCEPTADOR DE COMANDOS (Implementação da Seção 9.4 do Prompt Mestre)
+                 if user_message.lower().startswith("daniel:"):
+                     try:
+                         # Ex: "daniel: cadastrar promoção | item=x | preço=y"
+                         command_body = user_message.split(":", 1)[1].strip()
+                         
+                         # Salvar em 04_CONHECIMENTO_DINAMICO
+                         brain_dir = os.path.join(os.path.dirname(__file__), '..', 'brain')
+                         dynamic_dir = os.path.join(brain_dir, '04_CONHECIMENTO_DINAMICO')
+                         if not os.path.exists(dynamic_dir):
+                             os.makedirs(dynamic_dir)
+                             
+                         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                         file_path = os.path.join(dynamic_dir, '04_01_REGRAS_ADMIN.md')
+                         
+                         with open(file_path, "a", encoding="utf-8") as f:
+                             f.write(f"\n\n--- REGRA ADICIONADA EM {timestamp} ---\n")
+                             f.write(f"{command_body}\n")
+                             
+                         name_injection += "\n[SISTEMA: COMANDO GRAVADO COM SUCESSO NO ARQUIVO DE MEMÓRIA DIN MICA. O DANIEL JÁ SABE DISSO PARA AS PRÓXIMAS INTERAÇÕES.]"
+                     except Exception as e:
+                         name_injection += f"\n[SISTEMA: ERRO AO GRAVAR COMANDO: {str(e)}]"
+
 
             
             # Lógica de Horário
