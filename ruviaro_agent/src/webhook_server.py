@@ -16,9 +16,16 @@ import time
 
 # ... imports ...
 
-# Force load .env
-env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
-load_dotenv(dotenv_path=env_path)
+# Force load .env (Prioritize /etc/ for Production)
+secure_env_path = "/etc/ruviaro-agent/.env"
+local_env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
+
+if os.path.exists(secure_env_path):
+    load_dotenv(dotenv_path=secure_env_path)
+    logging.info(f"🔒 Loaded secure .env from {secure_env_path}")
+else:
+    load_dotenv(dotenv_path=local_env_path)
+    logging.info(f"⚠️ Loaded local .env from {local_env_path}")
 
 # Path do projeto
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
