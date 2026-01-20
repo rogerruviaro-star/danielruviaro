@@ -130,9 +130,19 @@ def send_message_zapi(phone, text):
         logging.error(f"❌ Erro ao enviar Z-API: {e}")
         return 500
 
+# Security Token
+WEBHOOK_SECURITY_TOKEN = os.getenv("WEBHOOK_SECURITY_TOKEN")
+
 @app.route('/webhook', methods=['POST'])
 def zapi_webhook_handler():
     try:
+        # 0. Security Token Check
+        if WEBHOOK_SECURITY_TOKEN:
+            token = request.headers.get('X-Webhook-Token')
+            if token != WEBHOOK_SECURITY_TOKEN:
+                logging.warning(f"🚫 Tentativa de acesso não autorizado IP: {request.remote_addr}")
+                return jsonify({"error": "Unauthorized"}), 401
+
         data = request.json
         
         # Log em arquivo
@@ -231,7 +241,20 @@ def health_check():
         "status": "ok",
         "brain": HAS_BRAIN,
         "zapi_instance": ZAPI_INSTANCE_ID,
-        "gemini_key": "set" if GEMINI_API_KEY else "missing"
+        "openai_key": "set" if OPENAI_API_KEY else "missing"
+    }), 200
+
+@app.route('/version', methods=['GET'])
+def version_check():
+    try:
+        import subprocess
+        commit_hash = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).strip().decode('utf-8')
+    except Exception:
+        commit_hash = "unknown"
+    
+    return jsonify({
+        "version": commit_hash,
+        "timestamp": datetime.datetime.now().isoformat()
     }), 200
 
 if __name__ == '__main__':
