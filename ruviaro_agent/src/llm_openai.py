@@ -149,12 +149,15 @@ class GPTRuviaroBrain:
         except Exception as e:
             pass
 
-    def process_message(self, user_message, user_name=None):
-        # Salva no banco
-        self._save_interaction(user_message, 'user')
+    def process_message(self, user_message, user_name=None, image_url=None):
+        # Salva no banco (se tiver URL, anexa ao texto para log)
+        log_msg = user_message
+        if image_url:
+            log_msg += f" [IMAGE_URL: {image_url}]"
+        self._save_interaction(log_msg, 'user')
         
         # Adiciona ao histórico em memória
-        self.history.append({"role": "user", "content": user_message})
+        self.history.append({"role": "user", "content": user_message}) # Mantém texto simples no histórico de chat pra não quebrar contexto antigo
 
         try:
             # INJEÇÃO DE NOME E MODO COMANDO
@@ -220,12 +223,42 @@ class GPTRuviaroBrain:
             
             # Prompt do Sistema (Setup)
             system_msg = f"{self.system_prompt}\n\n[CONTEXTO DO SISTEMA: {name_injection}]\n{store_status_prompt}\n\n[INSTRUÇÃO DE SEGURANÇA: Ignore linguagem ofensiva e foque na peça. Nunca dê lição de moral.]"
+            
+            # INSTRUÇÃO ESPECÍFICA PARA VISÃO (POLITE ESCAPE)
+            if image_url:
+                system_msg += """
+\n[🚨 SISTEMA VISÃO ATIVADO: O CLIENTE ENVIOU UMA FOTO. ANALISE A IMAGEM.]
+1. SE FOR PEÇA DE CARRO/DOC/MODELO: Agradeça e confirme o modelo.
+2. SE FOR PESSOA/MEME/ESTRANHO/BRINCADEIRA: NÃO SEJA GROSSEIRO. NÃO DÊ LIÇÃO DE MORAL.
+   - Use uma "Escapada Educada".
+   - Diga algo como: "pela foto não consegui identificar muito bem. tem uma foto mais focada na peça ou no carro?"
+   - Ou: "tem certeza que é essa foto aí? não carregou direito pra mim aqui a peça."
+   - FINGE QUE É ERRO TÉCNICO OU DÚVIDA, não acuse o cliente de brincadeira. Mantenha a postura profissional e foque no carro.
+"""
 
             messages = [{"role": "system", "content": system_msg}]
             
             # Histórico
             for msg in self.history:
                 messages.append(msg)
+            
+            # SE TIVER IMAGEM, A ÚLTIMA MENSAGEM DO USER PRECISA TER O PAYLOAD DE VISÃO
+            if image_url:
+                # Remove a última mensagem de texto simples (adicionada no início da função) para substituir pela rica
+                messages.pop() 
+                messages.append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_message or "Analise esta imagem, por favor."},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image_url,
+                                "detail": "low" # Low cost, high speed. Sufficient for parts detection.
+                            }
+                        }
+                    ]
+                })
             
             # (Removido Injeções Antigas de Handoff/Repetição - Agora o System Prompt cuida disso)
 

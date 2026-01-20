@@ -173,8 +173,15 @@ def zapi_webhook_handler():
 
         # Mensagem de Imagem
         elif 'image' in data:
-            logging.info(f"📸 [Z-API] Imagem recebida de {sender_name}")
-            message_text = "[O CLIENTE ENVIOU UMA FOTO DO CARRO/PEÇA. AGRADEÇA E USE A BOLINHA VERDE 🟢 PARA CHAMAR O HUMANO CONFERIR]"
+            image_url = data['image'].get('imageUrl') or data['image'].get('url')
+            caption = data['image'].get('caption', "")
+            logging.info(f"📸 [Z-API] Imagem recebida de {sender_name}. URL: {image_url}")
+            
+            # Se tiver legenda, usa como texto. Se não, usa texto genérico avisando da foto.
+            message_text = caption if caption else "[O CLIENTE ENVIOU UMA FOTO]"
+            
+            # O URL da imagem será passado para o Brain
+
 
         # 2. Verifica se é intervenção humana (SAVE ONLY)
         if from_me:
@@ -198,7 +205,7 @@ def zapi_webhook_handler():
                     logging.info(f"🚫 Agente em silêncio (Handoff ou Pausa) para {phone}.")
                     return jsonify({"status": "silenced"}), 200
 
-                response_text = agent.process_message(message_text, user_name=sender_name)
+                response_text = agent.process_message(message_text, user_name=sender_name, image_url=locals().get('image_url'))
                 logging.info(f"🧠 Resposta: {response_text[:100]}...")
             except Exception as e:
                 logging.error(f"❌ Erro no Brain: {e}")
