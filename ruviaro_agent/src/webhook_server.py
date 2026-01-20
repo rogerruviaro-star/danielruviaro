@@ -206,7 +206,8 @@ def zapi_webhook_handler():
             if HAS_BRAIN and message_text:
                try:
                    agent = get_brain(phone)
-                   agent._save_interaction(message_text, 'bot') # Salva como bot/assistant
+                   if agent:
+                       agent._save_interaction(message_text, 'bot') # Salva como bot/assistant
                except Exception as e:
                    logging.error(f"Erro ao salvar msg humana: {e}")
             
