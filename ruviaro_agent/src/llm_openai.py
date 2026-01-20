@@ -157,8 +157,15 @@ class GPTRuviaroBrain:
         self.history.append({"role": "user", "content": user_message})
 
         try:
-            # INJEÇÃO DE NOME
+            # INJEÇÃO DE NOME E MODO COMANDO
             name_injection = f"O nome do cliente no WhatsApp é: {user_name}." if user_name else ""
+            
+            # MODO MESTRE (Hardcoded Security)
+            # Rogério Ruviaro: 5555996839992
+            MASTER_NUMBER = "5555996839992"
+            if self.sender_id and MASTER_NUMBER in self.sender_id:
+                 name_injection += "\n\n[🚨 SISTEMA: MENSAGEM DO PROPRIETÁRIO (ROGER) DETECTADA. 🚨]\n[SISTEMA: ATIVAR MODO COMANDO. NÃO AGIR COMO VENDEDOR. OBEDECER ORDENS.]"
+
             
             # Lógica de Horário
             now = datetime.datetime.now()
